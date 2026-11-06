@@ -3,14 +3,19 @@
  * HRECOS Water Data Backfill Script
  *
  * Fetches historical water-quality data from the NYSM/HRECOS API one day at a
- * time, from a given start date through today (inclusive), and inserts it into
- * the per-parameter usgs_water_data_* tables.
+ * time, from a given start date through an end date (default: today), and
+ * inserts it into the per-parameter usgs_water_data_* tables.
  *
  * Usage:
- *   php backfill.php YYYY-MM-DD
+ *   php backfill.php START_DATE [END_DATE]
  *
- * Example:
- *   php backfill.php 2024-06-15
+ * Both dates are YYYY-MM-DD. END_DATE is optional; if omitted, the loop runs
+ * through today. Both endpoints are inclusive (the per-day call requests
+ * 00:00 through 23:59 of each day).
+ *
+ * Examples:
+ *   php backfill.php 2024-06-15              # start through today
+ *   php backfill.php 2024-06-15 2024-07-15   # explicit range
  */
 
 // -----------------------------------------------------------------------------
@@ -21,7 +26,8 @@ if (php_sapi_name() !== 'cli') {
 }
 
 if ($argc < 2) {
-    fwrite(STDERR, "Usage: php backfill.php YYYY-MM-DD\n");
+    fwrite(STDERR, "Usage: php backfill.php START_DATE [END_DATE]\n");
+    fwrite(STDERR, "  Both dates in YYYY-MM-DD format. END_DATE defaults to today.\n");
     exit(1);
 }
 
@@ -44,6 +50,25 @@ $today->setTime(0, 0, 0);
 
 if ($startDate > $today) {
     fwrite(STDERR, "Start date is in the future: $startDateStr\n");
+    exit(1);
+}
+
+// Determine end date: either from optional second arg, or default to today.
+if ($argc >= 3) {
+    $endDateStr = $argv[2];
+    $endDate = DateTime::createFromFormat('Y-m-d', $endDateStr);
+    if (!$endDate || $endDate->format('Y-m-d') !== $endDateStr) {
+        fwrite(STDERR, "Invalid end date format. Expected YYYY-MM-DD, got: $endDateStr\n");
+        exit(1);
+    }
+    $endDate->setTime(0, 0, 0);
+} else {
+    $endDate = clone $today;
+}
+
+if ($endDate < $startDate) {
+    fwrite(STDERR, "End date (" . $endDate->format('Y-m-d')
+        . ") is before start date ($startDateStr)\n");
     exit(1);
 }
 
@@ -263,11 +288,11 @@ $daysSucceeded = 0;
 $current = clone $startDate;
 
 echo "Backfill from " . $startDate->format('Y-m-d')
-   . " through " . $today->format('Y-m-d')
+   . " through " . $endDate->format('Y-m-d')
    . " (site=" . SITE_CODE . ")\n";
 echo str_repeat('-', 72) . "\n";
 
-while ($current <= $today) {
+while ($current <= $endDate) {
     $dateStr = $current->format('Y-m-d');
     $daysProcessed++;
 
@@ -296,7 +321,7 @@ while ($current <= $today) {
     $current->modify('+1 day');
 
     // Be polite between requests
-    if ($current <= $today) {
+    if ($current <= $endDate) {
         sleep(1);
     }
 }
